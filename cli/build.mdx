@@ -1,0 +1,112 @@
+---
+title: 'cargo oxichrome build: compile your extension'
+description: 'Full reference for the build command — flags, step-by-step pipeline behavior, output locations, and how to load the result in Chrome or Firefox.'
+keywords: ['cargo oxichrome build', 'wasm build', 'browser extension build', 'chromium', 'firefox', 'wasm-bindgen']
+---
+
+`cargo oxichrome build` compiles your Rust extension to WebAssembly, runs `wasm-bindgen` to generate JavaScript bindings, parses your source file to detect Oxichrome macros, and writes everything the browser needs into a `dist/` subdirectory. You run this command from your extension's root directory every time you want to produce a loadable extension package.
+
+## Syntax
+
+```bash
+cargo oxichrome build [--release] [--target <browser>]
+```
+
+## Flags
+
+| Flag | Description |
+|---|---|
+| `--release` | Builds in release mode (passes `--release` to `cargo build`). Produces smaller, optimized output. Omit for faster debug builds. |
+| `--target <browser>` | Target browser. Accepts `chromium` (or `chrome`) and `firefox`. Defaults to `chromium`. |
+
+## Build pipeline
+
+When you run `cargo oxichrome build`, the command executes the following steps in order:
+
+<Steps>
+  <Step title="Locate Cargo.toml">
+    The command checks that `Cargo.toml` exists in the current directory and reads the crate name from the `[package]` section. If `Cargo.toml` is missing, the build exits with an error.
+  </Step>
+  <Step title="Ensure wasm32-unknown-unknown target">
+    The command checks your installed Rust targets via `rustup target list --installed`. If `wasm32-unknown-unknown` is not present, it runs `rustup target add wasm32-unknown-unknown` automatically.
+  </Step>
+  <Step title="Ensure wasm-bindgen-cli">
+    The command reads the `wasm-bindgen` version pinned in your `Cargo.lock` and compares it against the installed `wasm-bindgen-cli` binary. If the versions do not match or the binary is not installed, it runs `cargo install wasm-bindgen-cli --version=<pinned>` to install the correct version.
+  </Step>
+  <Step title="Run cargo build">
+    Runs `cargo build --lib --target wasm32-unknown-unknown` (with `--release` appended when the flag is set). The compiled `.wasm` artifact lands in `target/wasm32-unknown-unknown/<profile>/`.
+  </Step>
+  <Step title="Run wasm-bindgen">
+    Runs `wasm-bindgen --target web` on the compiled `.wasm` file, writing generated JavaScript and the processed `.wasm` into `dist/<browser>/wasm/`.
+  </Step>
+  <Step title="Parse src/lib.rs">
+    The command parses your `src/lib.rs` to detect which Oxichrome macros you have used — `#[oxichrome::background]`, `#[oxichrome::popup]`, `#[oxichrome::options_page]`, and `#[oxichrome::content_script]`.
+  </Step>
+  <Step title="Generate manifest.json and JS shims">
+    Based on detected macros and the target browser, the command generates:
+    - `manifest.json` — browser-specific extension manifest
+    - `background.js` — service worker shim that loads your WASM module
+    - `popup.html` + `popup.js` — if `#[oxichrome::popup]` was detected
+    - `options.html` + `options.js` — if `#[oxichrome::options_page]` was detected
+    - `content_script_<fn_name>.js` — one file per `#[oxichrome::content_script]` function
+  </Step>
+  <Step title="Copy static assets">
+    If a `static/` directory exists in your project root, its contents are copied recursively into the `dist/<browser>/` output directory.
+  </Step>
+  <Step title="Run wasm-opt (optional)">
+    If `wasm-opt` is found in your `PATH`, the command runs `wasm-opt -Oz` on the `.wasm` output to reduce its size. If `wasm-opt` is not available, this step is skipped and the build continues normally.
+  </Step>
+</Steps>
+
+## Output locations
+
+| Target | Output directory |
+|---|---|
+| `chromium` (default) | `dist/chromium/` |
+| `firefox` | `dist/firefox/` |
+
+<Tip>
+You can build for both browsers by running the command twice with different `--target` values. Each target writes to its own subdirectory so the outputs do not overwrite each other.
+</Tip>
+
+## Loading the extension in your browser
+
+<Tabs>
+  <Tab title="Chrome / Chromium">
+    <Steps>
+      <Step title="Open the extensions page">
+        Navigate to `chrome://extensions` in your browser.
+      </Step>
+      <Step title="Enable developer mode">
+        Toggle **Developer mode** on using the switch in the top-right corner.
+      </Step>
+      <Step title="Load the unpacked extension">
+        Click **Load unpacked** and select the `dist/chromium/` folder in your project.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Firefox">
+    <Steps>
+      <Step title="Open the debugging page">
+        Navigate to `about:debugging#/runtime/this-firefox` in Firefox.
+      </Step>
+      <Step title="Load a temporary add-on">
+        Click **Load Temporary Add-on...** and select the `dist/firefox/manifest.json` file in your project.
+      </Step>
+    </Steps>
+    <Note>
+      Temporary add-ons in Firefox are removed when the browser closes. You need to reload them after each restart.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Build pipeline concepts" href="/concepts/build-pipeline">
+    Understand what happens inside the Oxichrome build system.
+  </Card>
+  <Card title="Static assets guide" href="/guides/static-assets">
+    Learn how to include icons, CSS, and other files in your extension.
+  </Card>
+</CardGroup>

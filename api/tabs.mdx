@@ -1,0 +1,198 @@
+---
+title: 'Tabs API — chrome.tabs bindings for Oxichrome'
+description: "Query open tabs, open new ones, and send messages to content scripts using Oxichrome's type-safe async wrappers around chrome.tabs."
+keywords: ['oxichrome', 'tabs', 'chrome.tabs', 'rust', 'webassembly', 'browser extension', 'content scripts']
+---
+
+The `oxichrome::tabs` module provides async Rust wrappers for `chrome.tabs`. Each function is generic over serializable input types and deserializable output types, so you define plain Rust structs for queries and responses rather than manipulating raw `JsValue` objects.
+
+<Warning>
+  Using any function in this module requires `permissions = ["tabs"]` in your `#[extension]` macro. Without it, Chrome will reject the API calls at runtime.
+</Warning>
+
+## Error handling
+
+All functions return `oxichrome::Result<T>`. Errors are represented by `OxichromeError`, which covers Chrome API rejections (`Js` variant), serialization failures (`Serde` variant), and unexpected JS runtime values (`UnexpectedValue` variant). Use `?` to propagate errors in async functions.
+
+---
+
+## `tabs::query`
+
+```rust
+pub async fn query<Q: Serialize, T: DeserializeOwned>(query_info: &Q) -> Result<Vec<T>>
+```
+
+Returns all open tabs that match the given criteria. `Q` is any struct that serializes to the shape `chrome.tabs.query` expects. `T` is your tab model — define only the fields you need.
+
+<ParamField path="query_info" type="&Q" required>
+  A serializable value describing the filter. Common fields are `active`, `current_window`, and `url`.
+</ParamField>
+
+<ResponseField name="Ok(Vec<T>)" type="Vec<T>">
+  All tabs matching the query, deserialized into `T`.
+</ResponseField>
+<ResponseField name="Err(OxichromeError)" type="Result">
+  Returned on a Chrome API error or a deserialization failure.
+</ResponseField>
+
+```rust
+#[derive(serde::Serialize)]
+struct QueryInfo {
+    active: bool,
+    current_window: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct Tab {
+    id: Option<i32>,
+    url: Option<String>,
+    title: Option<String>,
+}
+
+let tabs: Vec<Tab> = oxichrome::tabs::query(&QueryInfo {
+    active: true,
+    current_window: true,
+}).await?;
+```
+
+<Note>
+  Most `chrome.tabs` fields are optional in the Chrome extension API. Reflect that in your `T` by using `Option<_>` for fields like `id`, `url`, and `title`.
+</Note>
+
+---
+
+## `tabs::create`
+
+```rust
+pub async fn create<P: Serialize, T: DeserializeOwned>(props: &P) -> Result<T>
+```
+
+Opens a new tab with the specified properties. Returns the newly created tab deserialized into `T`.
+
+<ParamField path="props" type="&P" required>
+  A serializable value with the properties for the new tab. The most common field is `url`.
+</ParamField>
+
+<ResponseField name="Ok(T)" type="T">
+  The created tab object deserialized into `T`.
+</ResponseField>
+<ResponseField name="Err(OxichromeError)" type="Result">
+  Returned on a Chrome API error or a deserialization failure.
+</ResponseField>
+
+```rust
+#[derive(serde::Serialize)]
+struct CreateProps {
+    url: String,
+}
+
+#[derive(serde::Deserialize)]
+struct Tab {
+    id: Option<i32>,
+    url: Option<String>,
+}
+
+let tab: Tab = oxichrome::tabs::create(&CreateProps {
+    url: "https://example.com".into(),
+}).await?;
+```
+
+---
+
+## `tabs::send_message`
+
+```rust
+pub async fn send_message<M: Serialize>(tab_id: i32, message: &M) -> Result<JsValue>
+```
+
+Sends a message to a content script running in the specified tab. The response is returned as a raw `JsValue` because content script responses are untyped.
+
+<ParamField path="tab_id" type="i32" required>
+  The ID of the tab containing the content script to message.
+</ParamField>
+<ParamField path="message" type="&M" required>
+  Any serializable value to send as the message body.
+</ParamField>
+
+<ResponseField name="Ok(JsValue)" type="JsValue">
+  The response sent back by the content script's `sendResponse` callback.
+</ResponseField>
+<ResponseField name="Err(OxichromeError)" type="Result">
+  Returned if the Chrome API rejects the send or no listener is registered in the target tab.
+</ResponseField>
+
+```rust
+#[derive(serde::Serialize)]
+struct HighlightCommand {
+    action: String,
+    color: String,
+}
+
+let response = oxichrome::tabs::send_message(
+    tab_id,
+    &HighlightCommand {
+        action: "highlight".into(),
+        color: "#ffdd00".into(),
+    },
+).await?;
+```
+
+---
+
+## Full example
+
+The following example queries the active tab and opens a related page in a new tab:
+
+```rust
+use oxichrome::prelude::*;
+
+#[oxichrome::extension(
+    name = "Tab Helper",
+    version = "0.1.0",
+    description = "Demonstrates tabs::query and tabs::create",
+    permissions = ["tabs"]
+)]
+struct TabHelperExtension;
+
+#[derive(serde::Serialize)]
+struct QueryInfo {
+    active: bool,
+    current_window: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct Tab {
+    id: Option<i32>,
+    url: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct CreateProps {
+    url: String,
+}
+
+async fn open_docs_for_active_tab() -> oxichrome::Result<()> {
+    let tabs: Vec<Tab> = oxichrome::tabs::query(&QueryInfo {
+        active: true,
+        current_window: true,
+    }).await?;
+
+    if let Some(tab) = tabs.first() {
+        oxichrome::log!("Active tab URL: {:?}", tab.url);
+
+        let _new_tab: Tab = oxichrome::tabs::create(&CreateProps {
+            url: "https://example.com/docs".into(),
+        }).await?;
+    }
+
+    Ok(())
+}
+```
+
+---
+
+## See also
+
+- [Storage API](/api/storage) — persist data across extension sessions
+- [Runtime API](/api/runtime) — message passing between popup and background
+- [Guides: content scripts](/guides/content-scripts) — inject scripts into pages and use `tabs::send_message`

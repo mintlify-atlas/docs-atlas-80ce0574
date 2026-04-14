@@ -1,0 +1,397 @@
+---
+title: 'Oxichrome examples: counter and color picker deep dive'
+description: 'Step through the two bundled examples to see storage, reactive UI, custom wasm_bindgen bindings, and the EyeDropper API used in real extensions.'
+keywords: ['examples', 'counter extension', 'color picker', 'wasm_bindgen', 'EyeDropper', 'storage', 'RwSignal', 'Effect', 'leptos']
+---
+
+Oxichrome ships with two example extensions in the `examples/` directory. Each one demonstrates a different set of patterns — from basic reactive state and persistent storage to custom `wasm_bindgen` bindings for Web APIs that Oxichrome does not cover natively. Reading through both gives you a clear picture of how a complete Oxichrome extension is structured.
+
+---
+
+## Counter extension
+
+**Location:** `examples/counter-extension/`
+
+The counter extension displays a popup with increment, decrement, and reset buttons. The count is stored in `chrome.storage.local` so it persists across popup opens and browser restarts. An options page provides the same controls in a full-page layout.
+
+### What it demonstrates
+
+- Initializing storage on install with `#[on(runtime::on_installed)]`
+- Loading state from storage on component mount with `Effect::new`
+- Reactive UI state with `RwSignal`
+- Persisting changes back to storage with `storage::set`
+- Providing both a popup and an options page from the same crate
+
+### Cargo.toml
+
+```toml
+[package]
+name = "counter-extension"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+oxichrome = { path = "../../oxichrome" }
+leptos = { version = "0.7", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+serde = { version = "1", features = ["derive"] }
+```
+
+### Full source
+
+```rust
+use leptos::prelude::*;
+use oxichrome::prelude::*;
+
+#[oxichrome::extension(
+    name = "Counter Extension",
+    version = "0.1.0",
+    description = "A simple counter stored in chrome.storage.local",
+    permissions = ["storage"]
+)]
+struct CounterExtension;
+
+#[oxichrome::background]
+async fn start() {
+    oxichrome::log!("Counter Extension background service worker started!");
+}
+
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    oxichrome::log!("Counter Extension installed: {:?}", details);
+
+    if let Err(e) = oxichrome::storage::set("counter", &0i32).await {
+        oxichrome::log!("Failed to initialize counter: {}", e);
+    } else {
+        oxichrome::log!("Counter initialized to 0.");
+    }
+}
+
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    let count = RwSignal::new(0i32);
+
+    Effect::new(move || {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(Some(val)) = oxichrome::storage::get::<i32>("counter").await {
+                count.set(val);
+            }
+        });
+    });
+
+    let update = move |delta: i32| {
+        count.update(|c| *c += delta);
+        let val = count.get_untracked();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = oxichrome::storage::set("counter", &val).await;
+        });
+    };
+
+    let increment = move |_| update(1);
+    let decrement = move |_| update(-1);
+    let reset = move |_| {
+        count.set(0);
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = oxichrome::storage::set("counter", &0i32).await;
+        });
+    };
+
+    view! {
+        <h1>"Counter"</h1>
+        <div class="count">{move || count.get()}</div>
+        <div class="controls">
+            <button on:click=decrement>"\u{2212}"</button>
+            <button on:click=increment>"+"</button>
+            <button class="reset" on:click=reset>"Reset"</button>
+        </div>
+    }
+}
+
+#[oxichrome::options_page]
+fn Options() -> impl IntoView {
+    // Same controls in a full-page layout
+    // ...
+}
+```
+
+### Key patterns
+
+<AccordionGroup>
+  <Accordion title="Initializing storage on install">
+    The `#[on(runtime::on_installed)]` handler runs once when the extension is first installed. Use it to set default values so `storage::get` always finds an existing key:
+
+    ```rust
+    #[oxichrome::on(runtime::on_installed)]
+    async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+        let _ = oxichrome::storage::set("counter", &0i32).await;
+    }
+    ```
+  </Accordion>
+  <Accordion title="Loading state on component mount">
+    `Effect::new` runs once when the component mounts (and again when its dependencies change). Use it to load initial values from async sources like storage:
+
+    ```rust
+    Effect::new(move || {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(Some(val)) = oxichrome::storage::get::<i32>("counter").await {
+                count.set(val);
+            }
+        });
+    });
+    ```
+  </Accordion>
+  <Accordion title="Persisting on update">
+    After updating the in-memory signal, spawn an async task to write the new value back to storage. Using `get_untracked` avoids accidentally subscribing the closure to the signal:
+
+    ```rust
+    let update = move |delta: i32| {
+        count.update(|c| *c += delta);
+        let val = count.get_untracked();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = oxichrome::storage::set("counter", &val).await;
+        });
+    };
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Color picker
+
+**Location:** `examples/color-picker/`
+
+The color picker extension uses the browser's [EyeDropper API](https://developer.mozilla.org/en-US/docs/Web/API/EyeDropper) to let users sample any color from their screen. Picked colors are displayed in a scrollable history grid (up to 20 entries) and stored in `chrome.storage.local`. Clicking the hex value copies it to the clipboard.
+
+### What it demonstrates
+
+- Writing custom `#[wasm_bindgen]` extern blocks to bind Web APIs not included in Oxichrome's built-in bindings
+- Calling a browser Promise API (`EyeDropper.open()`) from Rust using `JsFuture`
+- Storing a `Vec<String>` in `chrome.storage.local`
+- Binding the clipboard API (`navigator.clipboard.writeText`) via `wasm_bindgen`
+- Reactive signal state across multiple async operations
+
+### Cargo.toml
+
+```toml
+[package]
+name = "color-picker"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+oxichrome = { path = "../../oxichrome" }
+leptos = { version = "0.7", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+serde = { version = "1", features = ["derive"] }
+js-sys = "0.3"
+```
+
+### Full source
+
+```rust
+use leptos::prelude::*;
+use oxichrome::prelude::*;
+use wasm_bindgen::prelude::*;
+
+#[oxichrome::extension(
+    name = "Color Picker",
+    version = "0.1.0",
+    description = "Pick colors from anywhere on screen using the EyeDropper API",
+    permissions = ["storage"]
+)]
+struct ColorPickerExtension;
+
+// EyeDropper Web API bindings (Chrome 95+)
+
+#[wasm_bindgen]
+extern "C" {
+    type EyeDropper;
+
+    #[wasm_bindgen(constructor)]
+    fn new() -> EyeDropper;
+
+    #[wasm_bindgen(method)]
+    fn open(this: &EyeDropper) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_namespace = ["navigator", "clipboard"], js_name = "writeText")]
+    fn clipboard_write_text(text: &str) -> js_sys::Promise;
+}
+
+#[oxichrome::background]
+async fn start() {
+    oxichrome::log!("Color Picker background service worker started!");
+}
+
+const MAX_HISTORY: usize = 20;
+const STORAGE_KEY: &str = "color_history";
+
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    let current_color = RwSignal::new(String::from("#000000"));
+    let history = RwSignal::new(Vec::<String>::new());
+    let picking = RwSignal::new(false);
+    let error_msg = RwSignal::new(Option::<String>::None);
+    let copied = RwSignal::new(false);
+
+    Effect::new(move || {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(Some(colors)) =
+                oxichrome::storage::get::<Vec<String>>(STORAGE_KEY).await
+            {
+                if let Some(first) = colors.first() {
+                    current_color.set(first.clone());
+                }
+                history.set(colors);
+            }
+        });
+    });
+
+    let pick_color = move |_| {
+        picking.set(true);
+        error_msg.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            let dropper = EyeDropper::new();
+            match wasm_bindgen_futures::JsFuture::from(dropper.open()).await {
+                Ok(result) => {
+                    let hex = js_sys::Reflect::get(&result, &JsValue::from_str("sRGBHex"))
+                        .unwrap_or(JsValue::from_str("#000000"))
+                        .as_string()
+                        .unwrap_or_else(|| "#000000".into());
+
+                    current_color.set(hex.clone());
+
+                    history.update(|h| {
+                        h.retain(|c| c != &hex);
+                        h.insert(0, hex);
+                        h.truncate(MAX_HISTORY);
+                    });
+
+                    let colors = history.get_untracked();
+                    let _ = oxichrome::storage::set(STORAGE_KEY, &colors).await;
+                }
+                Err(_) => {
+                    error_msg.set(Some("Cancelled or EyeDropper unavailable".into()));
+                }
+            }
+            picking.set(false);
+        });
+    };
+
+    let copy_hex = move |_| {
+        let hex = current_color.get_untracked();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = wasm_bindgen_futures::JsFuture::from(clipboard_write_text(&hex)).await;
+            copied.set(true);
+        });
+    };
+
+    view! {
+        <h1>"Color Picker"</h1>
+        <div
+            class="preview"
+            style:background-color=move || current_color.get()
+        ></div>
+        <div class="hex" on:click=copy_hex>
+            {move || current_color.get()}
+        </div>
+        {move || copied.get().then(|| view! { <div class="copied">"Copied!"</div> })}
+        <button
+            class="pick-btn"
+            on:click=pick_color
+            disabled=move || picking.get()
+        >
+            {move || if picking.get() { "Picking..." } else { "Pick Color" }}
+        </button>
+        // ... history grid
+    }
+}
+```
+
+### Key patterns
+
+<AccordionGroup>
+  <Accordion title="Custom wasm_bindgen bindings">
+    When you need a Web API that Oxichrome does not expose, write a `#[wasm_bindgen]` extern block yourself. The EyeDropper API is not part of the standard `web_sys` crate, so this example binds it directly:
+
+    ```rust
+    #[wasm_bindgen]
+    extern "C" {
+        type EyeDropper;
+
+        #[wasm_bindgen(constructor)]
+        fn new() -> EyeDropper;
+
+        #[wasm_bindgen(method)]
+        fn open(this: &EyeDropper) -> js_sys::Promise;
+    }
+    ```
+
+    Use `JsFuture::from` to drive a `Promise` from Rust:
+
+    ```rust
+    match wasm_bindgen_futures::JsFuture::from(dropper.open()).await {
+        Ok(result) => { /* handle result */ }
+        Err(_) => { /* cancelled or unsupported */ }
+    }
+    ```
+  </Accordion>
+  <Accordion title="Binding a namespaced API">
+    APIs like `navigator.clipboard.writeText` live on a nested JS namespace. Use `js_namespace` to bind them:
+
+    ```rust
+    #[wasm_bindgen(js_namespace = ["navigator", "clipboard"], js_name = "writeText")]
+    fn clipboard_write_text(text: &str) -> js_sys::Promise;
+    ```
+  </Accordion>
+  <Accordion title="Storing a Vec<String>">
+    Oxichrome's storage API is generic and works with any `serde`-serializable type. Storing a history list is the same as storing a scalar:
+
+    ```rust
+    let colors: Vec<String> = history.get_untracked();
+    let _ = oxichrome::storage::set("color_history", &colors).await;
+
+    // Reading back:
+    let stored: Option<Vec<String>> =
+        oxichrome::storage::get::<Vec<String>>("color_history").await.ok().flatten();
+    ```
+  </Accordion>
+  <Accordion title="Deduplicating history entries">
+    Before inserting a new color, the example removes duplicates and caps the list at `MAX_HISTORY`:
+
+    ```rust
+    history.update(|h| {
+        h.retain(|c| c != &hex);  // remove existing occurrence
+        h.insert(0, hex);          // add to front
+        h.truncate(MAX_HISTORY);   // keep at most 20 entries
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Explore the concepts used in these examples
+
+<CardGroup cols={2}>
+  <Card title="Proc macros" icon="code" href="/concepts/proc-macros">
+    How #[extension], #[background], #[popup], and #[on] work.
+  </Card>
+  <Card title="Leptos UI" icon="layout" href="/concepts/leptos-ui">
+    Building reactive popup and options page UIs with Leptos.
+  </Card>
+  <Card title="Storage API" icon="database" href="/api/storage">
+    Full reference for oxichrome::storage get, set, and remove.
+  </Card>
+  <Card title="Runtime API" icon="bolt" href="/api/runtime">
+    get_url, send_message, and other runtime bindings.
+  </Card>
+</CardGroup>

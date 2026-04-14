@@ -1,0 +1,90 @@
+{
+  "projectType": "framework",
+  "projectName": "Oxichrome",
+  "projectDescription": "A Rust framework for building browser extensions that compile to WebAssembly, with proc macro annotations, type-safe Chrome API bindings, and Leptos for reactive UI — no JavaScript required.",
+  "theme": "palm",
+  "primaryColor": "#fc5920",
+  "lightColor": "#fcac89",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "project-structure"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/proc-macros",
+              "concepts/build-pipeline",
+              "concepts/leptos-ui"
+            ]
+          },
+          {
+            "group": "Chrome APIs",
+            "pages": [
+              "api/storage",
+              "api/tabs",
+              "api/runtime"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/build",
+              "cli/new",
+              "cli/clean"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/firefox",
+              "guides/content-scripts",
+              "guides/static-assets",
+              "guides/examples"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Five proc macros (#[extension], #[background], #[on], #[popup], #[options_page], #[content_script]) transform Rust into wasm-bindgen exports",
+    "Type-safe bindings to chrome.storage, chrome.tabs, and chrome.runtime APIs",
+    "Leptos integration for reactive popup and options page UI",
+    "cargo oxichrome build CLI handles compilation, wasm-bindgen, manifest generation, JS/HTML shim generation, and optional wasm-opt",
+    "Firefox support via --target firefox with Manifest V3 compatibility",
+    "Zero hand-written JavaScript — compiles entirely to WebAssembly"
+  ],
+  "publicApiSurface": [
+    "#[oxichrome::extension(...)]",
+    "#[oxichrome::background]",
+    "#[oxichrome::on(namespace::event)]",
+    "#[oxichrome::popup]",
+    "#[oxichrome::options_page]",
+    "#[oxichrome::content_script(matches = [...])]",
+    "oxichrome::storage::get(key)",
+    "oxichrome::storage::set(key, value)",
+    "oxichrome::storage::remove(key)",
+    "oxichrome::tabs::query(query_info)",
+    "oxichrome::tabs::create(props)",
+    "oxichrome::tabs::send_message(tab_id, message)",
+    "oxichrome::runtime::get_url(path)",
+    "oxichrome::runtime::send_message(message)",
+    "oxichrome::log!(...)",
+    "cargo oxichrome build",
+    "cargo oxichrome build --release",
+    "cargo oxichrome build --target firefox",
+    "cargo oxichrome new <name>",
+    "cargo oxichrome clean"
+  ]
+}

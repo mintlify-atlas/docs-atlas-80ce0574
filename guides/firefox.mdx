@@ -1,0 +1,118 @@
+---
+title: 'Target Firefox with Oxichrome: build and load guide'
+description: 'Target Firefox with a single flag. The build produces a Manifest V3 extension with gecko-specific settings, ready to load in about:debugging.'
+keywords: ['firefox', 'manifest v3', 'gecko', 'browser_specific_settings', 'about:debugging', 'cross-browser']
+---
+
+Oxichrome supports Firefox out of the box. Passing `--target firefox` to the build command produces a separate output directory with a Firefox-compatible `manifest.json` — no manual manifest editing required. Both browser outputs can coexist in the same project, and you can switch between them without losing either artifact.
+
+## Building for Firefox
+
+Run the build with the `--target firefox` flag:
+
+```bash
+cargo oxichrome build --target firefox
+```
+
+Output lands in `dist/firefox/` instead of the default `dist/chromium/`:
+
+```
+dist/
+├── chromium/          # default build (unchanged)
+│   ├── manifest.json
+│   └── ...
+└── firefox/           # --target firefox
+    ├── manifest.json  # Firefox-specific manifest
+    └── ...
+```
+
+<Note>
+Building for one target does not overwrite or remove the other. `dist/chromium/` and `dist/firefox/` are fully independent.
+</Note>
+
+## How the Firefox manifest differs
+
+The Chromium manifest uses `service_worker` for the background entry point. Firefox Manifest V3 uses `scripts` instead, and also requires a `browser_specific_settings` block containing a gecko extension ID.
+
+Oxichrome generates the gecko ID automatically from your extension name:
+
+```json
+{
+  "manifest_version": 3,
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "my-extension@oxichrome.dev"
+    }
+  }
+}
+```
+
+The ID follows the pattern `{name-lowercased-and-hyphenated}@oxichrome.dev`. You do not need to configure this manually.
+
+For comparison, the Chromium manifest uses:
+
+```json
+{
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
+```
+
+## Loading the extension in Firefox
+
+<Steps>
+  <Step title="Open the debugging page">
+    Navigate to `about:debugging#/runtime/this-firefox` in Firefox.
+  </Step>
+  <Step title="Load the extension">
+    Click **Load Temporary Add-on**.
+  </Step>
+  <Step title="Select the manifest">
+    Browse to your project and select `dist/firefox/manifest.json`. Firefox will load the extension immediately.
+  </Step>
+</Steps>
+
+<Warning>
+Temporary add-ons are removed when Firefox closes. For persistent installation during development, consider using the [`web-ext`](https://extensionworkshop.com/documentation/develop/getting-started-with-web-ext/) tool from Mozilla.
+</Warning>
+
+## Release builds
+
+Pass `--release` alongside `--target firefox` for an optimized build with `wasm-opt` applied:
+
+```bash
+cargo oxichrome build --target firefox --release
+```
+
+## Cleaning up
+
+`cargo oxichrome clean` removes the entire `dist/` directory, including both `dist/chromium/` and `dist/firefox/`:
+
+```bash
+cargo oxichrome clean
+```
+
+If you want to keep one target's output, move it out of `dist/` before running clean.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="CLI: build" icon="hammer" href="/cli/build">
+    Full reference for the build command and all its flags.
+  </Card>
+  <Card title="CLI: clean" icon="trash" href="/cli/clean">
+    Remove build artifacts from the dist directory.
+  </Card>
+  <Card title="Project structure" icon="folder" href="/project-structure">
+    How your source and output directories are organized.
+  </Card>
+  <Card title="Build pipeline" icon="gear" href="/concepts/build-pipeline">
+    What happens under the hood during a build.
+  </Card>
+</CardGroup>

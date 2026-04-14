@@ -1,0 +1,95 @@
+---
+title: "Oxichrome: Rust framework for browser extensions"
+description: "Oxichrome compiles Rust to WebAssembly for Chrome and Firefox extensions. Six proc macros, type-safe Chrome API bindings, and Leptos UI — zero JavaScript."
+---
+
+Oxichrome is a Rust framework that lets you write browser extensions entirely in Rust, compiled to WebAssembly. You annotate your Rust code with proc macros — `#[oxichrome::extension]`, `#[oxichrome::background]`, `#[oxichrome::popup]`, and others — and the `cargo oxichrome build` command handles everything: Wasm compilation, wasm-bindgen glue generation, `manifest.json` creation, and JS/HTML shim generation. The result is a fully packaged extension with zero hand-written JavaScript.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build and load your first extension in under five minutes.
+  </Card>
+  <Card title="Proc macros" icon="wand-magic-sparkles" href="/concepts/proc-macros">
+    Learn how the six proc macros transform Rust into a working extension.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/overview">
+    Full reference for cargo oxichrome build, new, and clean.
+  </Card>
+  <Card title="Examples" icon="code" href="/guides/examples">
+    Explore the counter and color-picker example extensions from source.
+  </Card>
+</CardGroup>
+
+## What Oxichrome does
+
+A minimal Oxichrome extension looks like this:
+
+```rust src/lib.rs
+use leptos::prelude::*;
+use oxichrome::prelude::*;
+
+#[oxichrome::extension(
+    name = "My Extension",
+    version = "1.0.0",
+    permissions = ["storage"]
+)]
+struct Extension;
+
+#[oxichrome::background]
+async fn start() {
+    oxichrome::log!("Running!");
+}
+
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    view! { <p>"Hello from Rust."</p> }
+}
+```
+
+Running `cargo oxichrome build` compiles this to a `dist/chromium/` folder you can load directly in Chrome.
+
+## Key capabilities
+
+| Capability | Details |
+|---|---|
+| **Proc macros** | `#[extension]`, `#[background]`, `#[on]`, `#[popup]`, `#[options_page]`, `#[content_script]` |
+| **Chrome APIs** | Type-safe async bindings to `chrome.storage`, `chrome.tabs`, `chrome.runtime` |
+| **Reactive UI** | Leptos components for popup and options pages, compiled to Wasm |
+| **Build CLI** | `cargo oxichrome build` — one command from source to loadable extension |
+| **Firefox** | `--target firefox` generates Manifest V3 output for Firefox |
+| **No JavaScript** | All extension code — background, UI, content scripts — compiles to Wasm |
+
+## Workspace architecture
+
+Oxichrome is a Cargo workspace made up of five crates:
+
+```
+oxichrome/
+├── oxichrome/            # Re-export crate — what you add to [dependencies]
+├── oxichrome-core/       # Runtime: Chrome API bindings, error types, log! macro
+├── oxichrome-macros/     # Proc macros: #[extension], #[background], etc.
+├── oxichrome-build/      # Source parser, manifest generator, JS shim generator
+├── oxichrome-cli/        # The cargo oxichrome subcommand
+└── examples/
+    ├── counter-extension/
+    └── color-picker/
+```
+
+As a user you only interact with the `oxichrome` crate (added to `[dependencies]`) and the `cargo-oxichrome` CLI (installed via `cargo install`). The other crates are used internally by the build system.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install the CLI, scaffold a project, and load an extension in Chrome.
+  </Card>
+  <Card title="Project structure" icon="folder-tree" href="/project-structure">
+    Understand how an Oxichrome project is laid out on disk.
+  </Card>
+  <Card title="Core concepts" icon="lightbulb" href="/concepts/proc-macros">
+    Understand how proc macros, the build pipeline, and Leptos fit together.
+  </Card>
+  <Card title="Chrome APIs" icon="plug" href="/api/storage">
+    See the type-safe storage, tabs, and runtime API bindings.
+  </Card>
+</CardGroup>

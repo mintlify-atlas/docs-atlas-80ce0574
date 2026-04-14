@@ -1,0 +1,193 @@
+---
+title: 'Runtime API — chrome.runtime bindings for Oxichrome'
+description: "Resolve extension-internal URLs, send messages between components, and listen for lifecycle events like onInstalled using Oxichrome's runtime module."
+keywords: ['oxichrome', 'runtime', 'chrome.runtime', 'rust', 'webassembly', 'browser extension', 'on_installed', 'send_message']
+---
+
+The `oxichrome::runtime` module wraps `chrome.runtime` for use in Rust compiled to WebAssembly. It covers two common needs: resolving URLs for bundled assets and sending messages between extension components. The module also powers the `#[oxichrome::on]` attribute macro, which lets you register lifecycle event listeners declaratively.
+
+---
+
+## `runtime::get_url`
+
+```rust
+pub fn get_url(path: &str) -> String
+```
+
+Returns the extension-internal URL for a resource bundled with your extension (for example, an icon or a static HTML file). This function is **synchronous** — no `.await` needed.
+
+<ParamField path="path" type="&str" required>
+  The path to the resource relative to the extension root (e.g., `"icon.png"`, `"content.js"`).
+</ParamField>
+
+<ResponseField name="String" type="String">
+  A fully-qualified `chrome-extension://` URL for the resource.
+</ResponseField>
+
+```rust
+let icon_url = oxichrome::runtime::get_url("icon.png");
+// "chrome-extension://<id>/icon.png"
+```
+
+Use this when you need to reference bundled assets from Rust — for example, setting an image `src` in your Leptos UI or constructing a URL to pass to a tab.
+
+---
+
+## `runtime::send_message`
+
+```rust
+pub async fn send_message<T: Serialize>(message: &T) -> Result<JsValue>
+```
+
+Sends a message to other components within the same extension — typically from a popup to the background service worker or vice versa. The response is returned as a raw `JsValue`.
+
+<ParamField path="message" type="&T" required>
+  Any serializable value to send as the message body.
+</ParamField>
+
+<ResponseField name="Ok(JsValue)" type="JsValue">
+  The response returned by the receiving component's `sendResponse` callback.
+</ResponseField>
+<ResponseField name="Err(OxichromeError)" type="Result">
+  Returned if no listener is registered or the Chrome API rejects the call.
+</ResponseField>
+
+```rust
+#[derive(serde::Serialize)]
+struct Command {
+    action: String,
+}
+
+let response = oxichrome::runtime::send_message(&Command {
+    action: "refresh".into(),
+}).await?;
+```
+
+<Note>
+  `runtime::send_message` targets other components in the same extension. To send a message to a content script in a specific tab, use [`tabs::send_message`](/api/tabs) instead.
+</Note>
+
+---
+
+## `#[oxichrome::on]` event listeners
+
+Use the `#[oxichrome::on(...)]` attribute to register a handler for Chrome runtime lifecycle events. The attribute takes the event path as its argument and generates the necessary `wasm_bindgen` glue at compile time.
+
+The `#[oxichrome::on]` macro generates a bridge call of the form `chrome_{namespace}_{event}_add_listener`. The following events are supported by the built-in bridge:
+
+| Event path | Chrome API | Parameters |
+|---|---|---|
+| `runtime::on_installed` | `chrome.runtime.onInstalled` | `details: JsValue` |
+| `runtime::on_message` | `chrome.runtime.onMessage` | `message: JsValue, sender: JsValue, send_response: JsValue` |
+| `storage::on_changed` | `chrome.storage.onChanged` | `changes: JsValue, area_name: JsValue` |
+| `tabs::on_updated` | `chrome.tabs.onUpdated` | `tab_id: JsValue, change_info: JsValue, tab: JsValue` |
+| `tabs::on_activated` | `chrome.tabs.onActivated` | `active_info: JsValue` |
+
+### `runtime::on_installed`
+
+Fires once when the extension is installed or updated. Use it to set up initial storage state or run one-time migration logic.
+
+```rust
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    oxichrome::log!("Installed: {:?}", details);
+}
+```
+
+The `details` parameter is a raw `JsValue` containing the `chrome.runtime.onInstalled` event details object (with `reason`, `previousVersion`, etc.). Use `js_sys::Reflect::get` to extract specific fields if you need them.
+
+A real-world example from the counter extension initializes storage on install:
+
+```rust
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    oxichrome::log!("Counter Extension installed: {:?}", details);
+
+    if let Err(e) = oxichrome::storage::set("counter", &0i32).await {
+        oxichrome::log!("Failed to initialize counter: {}", e);
+    } else {
+        oxichrome::log!("Counter initialized to 0.");
+    }
+}
+```
+
+### `runtime::on_message`
+
+Fires when any extension component (popup, content script, or background) calls `runtime::send_message`. This is how you receive messages in the background service worker:
+
+```rust
+#[oxichrome::on(runtime::on_message)]
+async fn handle_message(
+    message: oxichrome::__private::wasm_bindgen::JsValue,
+    sender: oxichrome::__private::wasm_bindgen::JsValue,
+    _send_response: oxichrome::__private::wasm_bindgen::JsValue,
+) {
+    oxichrome::log!("Received message: {:?}", message);
+}
+```
+
+<Warning>
+  Event listeners registered with `#[oxichrome::on]` must be placed in the background service worker context (alongside the function annotated with `#[oxichrome::background]`). Chrome only dispatches these events to the background context.
+</Warning>
+
+---
+
+## `oxichrome::log!`
+
+The `log!` macro is re-exported from `oxichrome-core` and works like `println!`, but writes to the browser's extension console (DevTools → **Service Worker** or **Inspect popup**).
+
+```rust
+oxichrome::log!("Counter value: {}", count);
+oxichrome::log!("Details: {:?}", some_js_value);
+```
+
+It accepts the same format string syntax as `format!`. Internally it calls `console.log` via `web_sys`, so the output appears in the browser console rather than a terminal.
+
+<Tip>
+  Open the extension's service worker DevTools by navigating to `chrome://extensions`, enabling **Developer mode**, and clicking **Service Worker** next to your extension.
+</Tip>
+
+---
+
+## Full example
+
+```rust
+use oxichrome::prelude::*;
+
+#[oxichrome::extension(
+    name = "My Extension",
+    version = "1.0.0",
+    description = "Runtime API example",
+    permissions = ["storage"]
+)]
+struct MyExtension;
+
+#[oxichrome::background]
+async fn start() {
+    oxichrome::log!("Background service worker started.");
+}
+
+// Register the onInstalled listener.
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    oxichrome::log!("Extension installed: {:?}", details);
+    let _ = oxichrome::storage::set("initialized", &true).await;
+}
+
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    let icon_url = oxichrome::runtime::get_url("icon.png");
+
+    view! {
+        <img src=icon_url alt="Extension icon" />
+    }
+}
+```
+
+---
+
+## See also
+
+- [Storage API](/api/storage) — read and write persistent data
+- [Tabs API](/api/tabs) — query tabs and message content scripts
+- [Proc macros](/concepts/proc-macros) — how `#[extension]`, `#[background]`, and `#[on]` work

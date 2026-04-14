@@ -1,0 +1,175 @@
+---
+title: 'Storage API — chrome.storage.local for Oxichrome'
+description: 'Read, write, and delete values in chrome.storage.local from Rust. Covers get, set, and remove with serde-based serialization and real-world usage patterns.'
+keywords: ['oxichrome', 'storage', 'chrome.storage.local', 'rust', 'webassembly', 'wasm', 'browser extension']
+---
+
+The `oxichrome::storage` module exposes `chrome.storage.local` as async Rust functions. Oxichrome handles the JavaScript bridge internally, so you work with typed Rust values that are serialized and deserialized via `serde_wasm_bindgen` — no manual `JsValue` juggling required.
+
+<Note>
+  All storage functions require `permissions = ["storage"]` in your `#[extension]` macro.
+</Note>
+
+## Error handling
+
+Every function returns `oxichrome::Result<T>`, which is an alias for `std::result::Result<T, OxichromeError>`. The `OxichromeError` enum has three variants:
+
+| Variant            | When it occurs                                     |
+| ------------------ | -------------------------------------------------- |
+| `Js(JsError)`      | The Chrome API rejected the call                   |
+| `Serde(String)`    | Serialization or deserialization failed            |
+| `UnexpectedValue(String)` | A value had an unexpected shape in the JS runtime |
+
+Use the `?` operator to propagate errors in any `async fn` that returns `Result`.
+
+---
+
+## `storage::get`
+
+```rust
+pub async fn get<T: DeserializeOwned>(key: &str) -> Result<Option<T>>
+```
+
+Reads a value from `chrome.storage.local` by key. Returns `Ok(None)` when the key does not exist — it never errors on a missing key.
+
+<ParamField path="key" type="&str" required>
+  The storage key to look up.
+</ParamField>
+
+<ResponseField name="Ok(Some(T))" type="Option<T>">
+  The stored value deserialized into `T`.
+</ResponseField>
+<ResponseField name="Ok(None)" type="Option<T>">
+  Returned when the key is absent from storage.
+</ResponseField>
+<ResponseField name="Err(OxichromeError)" type="Result">
+  Returned on a Chrome API error or a deserialization failure.
+</ResponseField>
+
+```rust
+let val: Option<i32> = oxichrome::storage::get("counter").await?;
+```
+
+<Tip>
+  Always annotate the type when calling `get` — the compiler needs to know what to deserialize into. Use the turbofish syntax (`get::<i32>(...)`) or a typed binding.
+</Tip>
+
+---
+
+## `storage::set`
+
+```rust
+pub async fn set<T: Serialize>(key: &str, value: &T) -> Result<()>
+```
+
+Stores any serializable value under the given key. Existing values are overwritten.
+
+<ParamField path="key" type="&str" required>
+  The key to store the value under.
+</ParamField>
+<ParamField path="value" type="&T" required>
+  A reference to any value that implements `serde::Serialize`.
+</ParamField>
+
+```rust
+oxichrome::storage::set("counter", &42i32).await?;
+```
+
+You can store any `serde::Serialize` type — primitives, structs, enums, or collections:
+
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Settings {
+    theme: String,
+    font_size: u8,
+}
+
+let settings = Settings { theme: "dark".into(), font_size: 14 };
+oxichrome::storage::set("settings", &settings).await?;
+```
+
+---
+
+## `storage::remove`
+
+```rust
+pub async fn remove(key: &str) -> Result<()>
+```
+
+Deletes a key from `chrome.storage.local`. Calling `remove` on a key that does not exist succeeds without error.
+
+<ParamField path="key" type="&str" required>
+  The key to delete.
+</ParamField>
+
+```rust
+oxichrome::storage::remove("counter").await?;
+```
+
+---
+
+## Real-world example
+
+The counter extension below demonstrates the two most common storage patterns in Oxichrome: loading a value on mount inside `Effect::new`, and persisting on every user interaction.
+
+```rust
+use leptos::prelude::*;
+use oxichrome::prelude::*;
+
+#[oxichrome::extension(
+    name = "Counter Extension",
+    version = "0.1.0",
+    description = "A simple counter stored in chrome.storage.local",
+    permissions = ["storage"]
+)]
+struct CounterExtension;
+
+// Initialize storage on first install.
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    if let Err(e) = oxichrome::storage::set("counter", &0i32).await {
+        oxichrome::log!("Failed to initialize counter: {}", e);
+    }
+}
+
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    let count = RwSignal::new(0i32);
+
+    // Load the persisted value when the popup opens.
+    Effect::new(move || {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(Some(val)) = oxichrome::storage::get::<i32>("counter").await {
+                count.set(val);
+            }
+        });
+    });
+
+    let update = move |delta: i32| {
+        count.update(|c| *c += delta);
+        let val = count.get_untracked();
+        // Persist after every state change.
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = oxichrome::storage::set("counter", &val).await;
+        });
+    };
+
+    view! {
+        <button on:click=move |_| update(-1)>"-"</button>
+        <span>{move || count.get()}</span>
+        <button on:click=move |_| update(1)>"+"</button>
+    }
+}
+```
+
+<Note>
+  `Effect::new` runs once when the component mounts. Wrapping the async call in `wasm_bindgen_futures::spawn_local` is required because Leptos effects are synchronous.
+</Note>
+
+---
+
+## See also
+
+- [Runtime API](/api/runtime) — send messages between extension components
+- [Tabs API](/api/tabs) — query and interact with open tabs
+- [Project structure](/project-structure) — where to place popup, background, and options page code

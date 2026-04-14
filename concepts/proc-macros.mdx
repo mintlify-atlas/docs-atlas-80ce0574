@@ -1,0 +1,298 @@
+---
+title: "Oxichrome proc macros: six attributes for extensions"
+description: "The six attribute macros that turn annotated Rust structs and functions into a fully wired browser extension — no boilerplate, no JavaScript."
+keywords: ["proc macros", "oxichrome", "extension macro", "background macro", "popup macro", "content script macro", "rust browser extension"]
+---
+
+Oxichrome ships six procedural attribute macros that generate all the WebAssembly entry points, JS shims, and manifest metadata your extension needs. You annotate ordinary Rust items — a struct for identity, async functions for background logic, and Leptos component functions for UI — and the macros handle the rest at compile time. This page documents every macro's signature, parameters, and expected usage.
+
+## `#[oxichrome::extension(...)]`
+
+Apply this macro to a unit struct to declare the extension's identity. The build pipeline reads the arguments directly from `src/lib.rs` at build time (without recompiling) to generate `manifest.json`.
+
+**Signature**
+
+```rust
+#[oxichrome::extension(
+    name = "...",
+    version = "...",
+    description = "...",   // optional
+    permissions = ["..."]  // optional, Chrome permission strings
+)]
+struct YourExtension;
+```
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | string literal | Yes | Extension name written to `manifest.json`. |
+| `version` | string literal | Yes | Semver string, e.g. `"1.0.0"`. |
+| `description` | string literal | No | Short description for the Chrome Web Store listing. |
+| `permissions` | array of string literals | No | Chrome permission identifiers such as `"storage"` or `"tabs"`. |
+
+**What it generates**
+
+The macro emits a hidden `__oxichrome_meta` module with `const` declarations for each field, a `__OXICHROME_EXTENSION_MARKER` constant used by the build tool to detect the crate, and `name()` / `version()` inherent methods on the struct.
+
+**Example**
+
+```rust src/lib.rs
+#[oxichrome::extension(
+    name = "Counter Extension",
+    version = "0.1.0",
+    description = "A simple counter stored in chrome.storage.local",
+    permissions = ["storage"]
+)]
+struct CounterExtension;
+```
+
+---
+
+## `#[oxichrome::background]`
+
+Marks an `async fn` as the service worker entry point. The function runs when the background page loads and is the right place to start long-running tasks or set up state.
+
+<Warning>
+The function must be `async`. Applying the macro to a non-async function is a compile-time error.
+</Warning>
+
+**Signature**
+
+```rust
+#[oxichrome::background]
+async fn your_fn() {
+    // service worker logic
+}
+```
+
+**What it generates**
+
+The macro preserves your function unchanged and emits a `#[wasm_bindgen]`-annotated wrapper `__oxichrome_bg_{fn_name}()` that spawns your async function via `wasm_bindgen_futures::spawn_local`. The generated `background.js` shim calls this wrapper on startup.
+
+**Example**
+
+```rust src/lib.rs
+#[oxichrome::background]
+async fn start() {
+    oxichrome::log!("Background service worker started!");
+}
+```
+
+---
+
+## `#[oxichrome::on(namespace::event)]`
+
+Registers an `async fn` as a listener for a Chrome event. The argument is a two-segment path using `::` to separate the API namespace from the event name.
+
+**Signature**
+
+```rust
+#[oxichrome::on(namespace::event_name)]
+async fn your_handler(details: JsValue) {
+    // event handler logic
+}
+```
+
+**Parameters**
+
+| Segment | Example | Description |
+|---|---|---|
+| `namespace` | `runtime` | The Chrome API namespace, e.g. `runtime`, `tabs`, `storage`. |
+| `event_name` | `on_installed` | The event name in snake_case. |
+
+**What it generates**
+
+The macro emits a `#[wasm_bindgen]` wrapper `__oxichrome_register_{fn_name}()`. The generated `background.js` imports and calls this wrapper before calling your background function, so listeners are registered synchronously before the service worker suspends.
+
+**Example**
+
+```rust src/lib.rs
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    oxichrome::log!("Extension installed: {:?}", details);
+
+    if let Err(e) = oxichrome::storage::set("counter", &0i32).await {
+        oxichrome::log!("Failed to initialize counter: {}", e);
+    }
+}
+```
+
+---
+
+## `#[oxichrome::popup]`
+
+Marks a Leptos component function as the popup UI. When the user clicks the extension icon, Chrome opens `popup.html`, which loads `popup.js`, which calls the generated `__oxichrome_mount_popup()` entry point — which in turn mounts your component into `document.body`.
+
+**Signature**
+
+```rust
+#[oxichrome::popup]
+fn YourComponent() -> impl IntoView {
+    view! { /* Leptos template */ }
+}
+```
+
+**What it generates**
+
+The macro wraps your function with `#[leptos::component]` and emits a `#[wasm_bindgen]` function `__oxichrome_mount_popup()` that calls `leptos::mount::mount_to_body(YourComponent)`. The mount handle is leaked with `std::mem::forget` so the reactive tree lives for the lifetime of the page.
+
+**Example**
+
+```rust src/lib.rs
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    view! {
+        <p>"Hello from the popup!"</p>
+    }
+}
+```
+
+---
+
+## `#[oxichrome::options_page]`
+
+Marks a Leptos component function as the options page UI. Works identically to `#[oxichrome::popup]`, but generates `options.html`, `options.js`, and the `__oxichrome_mount_options()` entry point. The options page is opened in a full browser tab.
+
+**Signature**
+
+```rust
+#[oxichrome::options_page]
+fn YourOptionsComponent() -> impl IntoView {
+    view! { /* Leptos template */ }
+}
+```
+
+**Example**
+
+```rust src/lib.rs
+#[oxichrome::options_page]
+fn Options() -> impl IntoView {
+    view! {
+        <h1>"Extension Settings"</h1>
+    }
+}
+```
+
+---
+
+## `#[oxichrome::content_script(matches = [...])]`
+
+Marks an `async fn` as a content script that runs inside web pages. The `matches` parameter determines which URLs trigger the script. This is the Chrome [match pattern](https://developer.chrome.com/docs/extensions/develop/concepts/match-patterns) syntax.
+
+<Warning>
+The function must be `async`. Applying the macro to a non-async function is a compile-time error.
+</Warning>
+
+**Signature**
+
+```rust
+#[oxichrome::content_script(
+    matches = ["<pattern>", ...],
+    run_at = DocumentStart,   // optional: DocumentStart | DocumentEnd | DocumentIdle
+    all_frames = true,         // optional, default false
+    css = ["styles.css"]       // optional, files from static/
+)]
+async fn your_script() {
+    // injected into matching web pages
+}
+```
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `matches` | array of string literals | Yes | Chrome match patterns. Use `"<all_urls>"` to match every page. |
+| `run_at` | identifier | No | When to inject: `DocumentStart`, `DocumentEnd`, or `DocumentIdle`. |
+| `all_frames` | bool | No | Inject into all frames, not just the top-level document. |
+| `css` | array of string literals | No | CSS files from `static/` to inject alongside the script. |
+
+**What it generates**
+
+The macro emits a `#[wasm_bindgen]` wrapper `__oxichrome_cs_{fn_name}()`. The generated `content_script_{fn_name}.js` shim uses `chrome.runtime.getURL` to load the WASM module dynamically (required for content scripts, which cannot use static `import`) and then calls this wrapper.
+
+**Example**
+
+```rust src/lib.rs
+#[oxichrome::content_script(
+    matches = ["https://example.com/*"],
+    run_at = DocumentIdle,
+    css = ["injected.css"]
+)]
+async fn inject() {
+    oxichrome::log!("Content script running on example.com");
+}
+```
+
+---
+
+## Putting it all together
+
+The counter extension example uses five of the six macros in a single file:
+
+```rust src/lib.rs
+use leptos::prelude::*;
+use oxichrome::prelude::*;
+
+#[oxichrome::extension(
+    name = "Counter Extension",
+    version = "0.1.0",
+    description = "A simple counter stored in chrome.storage.local",
+    permissions = ["storage"]
+)]
+struct CounterExtension;
+
+#[oxichrome::background]
+async fn start() {
+    oxichrome::log!("Counter Extension background service worker started!");
+}
+
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    oxichrome::log!("Counter Extension installed: {:?}", details);
+    if let Err(e) = oxichrome::storage::set("counter", &0i32).await {
+        oxichrome::log!("Failed to initialize counter: {}", e);
+    }
+}
+
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    let count = RwSignal::new(0i32);
+
+    Effect::new(move || {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(Some(val)) = oxichrome::storage::get::<i32>("counter").await {
+                count.set(val);
+            }
+        });
+    });
+
+    view! {
+        <div>{move || count.get()}</div>
+    }
+}
+
+#[oxichrome::options_page]
+fn Options() -> impl IntoView {
+    view! {
+        <h1>"Counter Extension Settings"</h1>
+    }
+}
+```
+
+<Tip>
+You can have multiple `#[oxichrome::background]` functions and multiple `#[oxichrome::content_script]` functions in a single crate. Each generates its own entry point and is wired into `background.js` or a dedicated `content_script_{fn_name}.js` file.
+</Tip>
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Build pipeline" icon="gear" href="/concepts/build-pipeline">
+    See how the CLI uses these macros to produce a loadable extension.
+  </Card>
+  <Card title="Leptos UI" icon="display" href="/concepts/leptos-ui">
+    Learn how to build reactive popup and options page UIs.
+  </Card>
+</CardGroup>

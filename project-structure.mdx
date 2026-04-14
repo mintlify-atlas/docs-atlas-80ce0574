@@ -1,0 +1,162 @@
+---
+title: "Project structure: workspace layout and build output"
+description: "Learn how Oxichrome's five-crate workspace is organized, what each crate does, and how the build pipeline produces dist/chromium/ and dist/firefox/ output."
+keywords: ["oxichrome", "project structure", "workspace", "crates", "dist", "build output", "cargo workspace"]
+---
+
+Oxichrome is organized as a Cargo workspace containing five crates. When you create an extension with `cargo oxichrome new`, you get a single-crate project that depends on the `oxichrome` re-export crate. Understanding the workspace layout helps you know where each piece of functionality lives and what the build pipeline produces.
+
+## Workspace layout
+
+```
+oxichrome/                      Cargo workspace root
+├── Cargo.toml                  Workspace manifest
+├── oxichrome/                  Re-export crate (your direct dependency)
+│   └── src/lib.rs
+├── oxichrome-core/             Runtime: Chrome API bindings, error types, logging
+│   └── src/
+├── oxichrome-macros/           Proc macros
+│   └── src/
+├── oxichrome-build/            Manifest and shim generation
+│   └── src/
+├── oxichrome-cli/              The cargo oxichrome subcommand
+│   └── src/
+└── examples/
+    ├── counter-extension/
+    └── color-picker/
+```
+
+## Crate descriptions
+
+### `oxichrome`
+
+The re-export crate — the only crate you add to your extension's `[dependencies]`. It re-exports proc macros from `oxichrome-macros`, the Chrome API modules from `oxichrome-core`, the `log!` macro, and the `prelude` module. You never import the internal crates directly.
+
+```toml
+[dependencies]
+oxichrome = { version = "0.1" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+```
+
+### `oxichrome-core`
+
+The runtime crate. Contains:
+
+- **`storage`** — async bindings to `chrome.storage.local`: `get`, `set`, and `remove`
+- **`tabs`** — async bindings to `chrome.tabs`: `query`, `create`, `send_message`
+- **`runtime`** — bindings to `chrome.runtime`: `get_url`, `send_message`, and event names like `runtime::on_installed`
+- **`content_script`** — the `RunAt` enum for content script injection timing
+- **`error`** — the `OxichromeError` type and `Result` alias
+- **`log!`** macro — forwards to `console.log` in the WASM context
+
+### `oxichrome-macros`
+
+The proc macro crate. Provides six attribute macros:
+
+| Macro | Applied to | Effect |
+|---|---|---|
+| `#[extension(...)]` | Struct | Declares extension metadata (name, version, description, permissions) |
+| `#[background]` | Async fn | Marks the service worker entry point |
+| `#[on(namespace::event)]` | Async fn | Registers a Chrome event listener |
+| `#[popup]` | Leptos component fn | Marks the popup UI |
+| `#[options_page]` | Leptos component fn | Marks the options page UI |
+| `#[content_script(...)]` | Async fn | Marks a content script injected into web pages |
+
+Each macro generates the wasm-bindgen exports and wiring that the browser and the build pipeline expect. You never call these exports directly.
+
+### `oxichrome-build`
+
+The build logic crate. During `cargo oxichrome build`, this crate:
+
+1. Parses your `src/lib.rs` to detect which proc macros you used
+2. Generates `manifest.json` (Manifest V3, adapted for Chromium or Firefox)
+3. Generates `background.js` — the minimal JS that loads the WASM service worker
+4. Generates `popup.html` and `popup.js` if you used `#[popup]`
+5. Generates `options.html` and `options.js` if you used `#[options_page]`
+6. Copies files from your project's `static/` directory into the output folder
+
+### `oxichrome-cli`
+
+Implements the `cargo oxichrome` subcommand with three commands:
+
+| Command | Description |
+|---|---|
+| `cargo oxichrome new <name>` | Scaffold a new extension project |
+| `cargo oxichrome build` | Build for Chromium (default) |
+| `cargo oxichrome build --target firefox` | Build for Firefox |
+| `cargo oxichrome build --release` | Optimized release build |
+| `cargo oxichrome clean` | Remove the `dist/` directory |
+
+## Your extension's layout
+
+When you scaffold a new project with `cargo oxichrome new`, your extension has this structure:
+
+```
+my-extension/
+├── Cargo.toml          Your extension's package manifest
+├── .gitignore
+└── src/
+    └── lib.rs          Your extension code (proc macros go here)
+```
+
+You can also add a `static/` directory for assets you want copied into the output:
+
+```
+my-extension/
+├── Cargo.toml
+├── src/
+│   └── lib.rs
+└── static/             Optional: files copied as-is into dist/
+    ├── icon-16.png
+    ├── icon-48.png
+    └── icon-128.png
+```
+
+<Note>
+  The `static/` directory is copied verbatim into both `dist/chromium/` and `dist/firefox/`. Use it for icons and any other assets your extension needs at runtime. Reference these files in your proc macro attributes or via `oxichrome::runtime::get_url`.
+</Note>
+
+## Build output
+
+Running `cargo oxichrome build` writes to `dist/chromium/`. Running with `--target firefox` writes to `dist/firefox/`. Both directories have the same file layout:
+
+```
+dist/
+├── chromium/
+│   ├── manifest.json         Manifest V3 for Chrome, Edge, and Brave
+│   ├── background.js         JS shim that loads the WASM service worker
+│   ├── popup.html            Entry HTML for the popup (if you used #[popup])
+│   ├── popup.js              JS shim that mounts the Leptos popup component
+│   ├── options.html          Entry HTML for the options page (if you used #[options_page])
+│   ├── options.js            JS shim that mounts the Leptos options component
+│   └── wasm/
+│       ├── my_extension.js   wasm-bindgen JS bindings
+│       └── my_extension_bg.wasm   Compiled WebAssembly module
+└── firefox/
+    ├── manifest.json         Manifest V3 with gecko browser-specific settings
+    └── ...                   Same files as chromium/
+```
+
+The `wasm/` directory name matches your crate name (with hyphens converted to underscores). Files in `static/` appear alongside these generated files in the output root.
+
+<Tip>
+  To inspect the generated manifests and shims, look in `dist/chromium/` after your first build. The generated `manifest.json` reflects the metadata you provided to `#[oxichrome::extension]` and the permissions inferred from the macros you used.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Proc macros" icon="wand-magic-sparkles" href="/concepts/proc-macros">
+    Learn all six proc macros and their parameters in detail.
+  </Card>
+  <Card title="Build pipeline" icon="gear" href="/concepts/build-pipeline">
+    Understand how the CLI drives compilation, wasm-bindgen, and output generation.
+  </Card>
+  <Card title="Static assets" icon="image" href="/guides/static-assets">
+    Add icons and other assets to your extension via the static/ directory.
+  </Card>
+  <Card title="Firefox guide" icon="globe" href="/guides/firefox">
+    Target Firefox with --target firefox and load the output in about:debugging.
+  </Card>
+</CardGroup>

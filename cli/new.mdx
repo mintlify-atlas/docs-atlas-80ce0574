@@ -1,0 +1,110 @@
+---
+title: 'cargo oxichrome new: scaffold an extension project'
+description: 'Reference for the new command — what it generates, the exact contents of the starter files, and how to run your first build after scaffolding.'
+keywords: ['cargo oxichrome new', 'scaffold', 'new extension', 'starter template', 'Cargo.toml', 'lib.rs']
+---
+
+`cargo oxichrome new` creates a new directory containing a minimal, working Oxichrome browser extension. You get a `Cargo.toml` with the correct dependencies, a `src/lib.rs` with a background script entry point, and a `.gitignore` — everything you need to run `cargo oxichrome build` straight away.
+
+## Syntax
+
+```bash
+cargo oxichrome new <name>
+```
+
+The `<name>` argument sets both the directory name and the crate name in `Cargo.toml`. It defaults to `my-extension` if you omit it.
+
+<Note>
+The command fails if a directory with the given name already exists in the current working directory.
+</Note>
+
+## Generated files
+
+Running `cargo oxichrome new my-extension` produces the following structure:
+
+```
+my-extension/
+├── Cargo.toml
+├── .gitignore
+└── src/
+    └── lib.rs
+```
+
+### Cargo.toml
+
+```toml
+[package]
+name = "my-extension"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+oxichrome = { version = "0.1" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+```
+
+The `crate-type = ["cdylib"]` entry is required — it tells the Rust compiler to produce a C-compatible dynamic library, which is the format the WebAssembly target expects.
+
+### src/lib.rs
+
+The name you pass to `cargo oxichrome new` is converted to title case for use as the display name in log messages and the extension manifest. For `my-extension` the generated file looks like this:
+
+```rust
+use oxichrome::prelude::*;
+
+#[oxichrome::extension(
+    name = "My Extension",
+    version = "0.1.0",
+    permissions = ["storage"]
+)]
+struct Extension;
+
+#[oxichrome::background]
+async fn start() {
+    oxichrome::log!("My Extension started!");
+}
+
+#[oxichrome::on(runtime::on_installed)]
+async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+    oxichrome::log!("My Extension installed: {:?}", details);
+}
+```
+
+### .gitignore
+
+```
+/target
+/dist
+*.wasm
+Cargo.lock
+```
+
+## Next steps
+
+After scaffolding, build and load the extension with:
+
+```bash
+cd my-extension
+cargo oxichrome build
+```
+
+<Tip>
+You do not need to install the `wasm32-unknown-unknown` target or `wasm-bindgen-cli` manually. `cargo oxichrome build` detects missing toolchain components and installs them automatically before compiling.
+</Tip>
+
+Once the build finishes, load the `dist/chromium/` folder as an unpacked extension in Chrome, or `dist/firefox/manifest.json` as a temporary add-on in Firefox. See the [build reference](/cli/build) for detailed loading instructions.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="cargo oxichrome build" href="/cli/build">
+    Compile your scaffolded extension and load it in a browser.
+  </Card>
+  <Card title="Proc-macros reference" href="/concepts/proc-macros">
+    Learn about the macros used in the generated `src/lib.rs`.
+  </Card>
+</CardGroup>

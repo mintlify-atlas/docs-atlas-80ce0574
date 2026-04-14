@@ -1,97 +1,92 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Oxichrome: Build Browser Extensions in Pure Rust"
+description: "Oxichrome compiles Rust to WebAssembly for Chrome and Firefox extensions. Proc macros, type-safe Chrome APIs, Leptos UI — no JavaScript required."
 ---
 
-## Setting up
+Oxichrome is a Rust framework for building browser extensions that compile to WebAssembly. Annotate your Rust code with proc macros like `#[oxichrome::popup]` and `#[oxichrome::background]`, and `cargo oxichrome build` handles everything — compilation, wasm-bindgen, manifest generation, and JS shim generation — producing a ready-to-load extension with zero hand-written JavaScript.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Scaffold your first extension and load it in Chrome in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Proc Macros" icon="wand-magic-sparkles" href="/concepts/proc-macros">
+    Learn how the six proc macros transform your Rust into a working extension.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Chrome APIs" icon="chrome" href="/api/storage">
+    Type-safe bindings to chrome.storage, chrome.tabs, and chrome.runtime.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Full reference for the cargo oxichrome build, new, and clean commands.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Get up and running
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Install the CLI">
+    Install the `cargo-oxichrome` subcommand from crates.io.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+    ```bash
+    cargo install cargo-oxichrome
+    ```
+  </Step>
+  <Step title="Scaffold a new extension">
+    Create a new project with the correct structure and dependencies pre-configured.
 
-## Need inspiration?
+    ```bash
+    cargo oxichrome new my-extension
+    cd my-extension
+    ```
+  </Step>
+  <Step title="Write your extension in Rust">
+    Use proc macros to define your background worker and popup UI — no JavaScript needed.
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+    ```rust src/lib.rs
+    use leptos::prelude::*;
+    use oxichrome::prelude::*;
+
+    #[oxichrome::extension(
+        name = "My Extension",
+        version = "1.0.0",
+        permissions = ["storage"]
+    )]
+    struct Extension;
+
+    #[oxichrome::background]
+    async fn start() {
+        oxichrome::log!("Running!");
+    }
+
+    #[oxichrome::popup]
+    fn Popup() -> impl IntoView {
+        view! { <p>"Hello from Rust."</p> }
+    }
+    ```
+  </Step>
+  <Step title="Build and load">
+    Build for Chrome, then load the output folder as an unpacked extension.
+
+    ```bash
+    cargo oxichrome build
+    ```
+
+    Load `dist/chromium/` in `chrome://extensions` with **Load unpacked**.
+  </Step>
+</Steps>
+
+## Why Oxichrome?
+
+<CardGroup cols={2}>
+  <Card title="Zero JavaScript" icon="ban">
+    Your entire extension — background workers, popup UI, event handlers — compiles to WebAssembly. You never write a `.js` file.
+  </Card>
+  <Card title="Type-safe Chrome APIs" icon="shield-check">
+    Bindings to `chrome.storage`, `chrome.tabs`, and `chrome.runtime` are fully typed and async-ready with Rust's `Result` type.
+  </Card>
+  <Card title="Reactive UI with Leptos" icon="display">
+    Build popup and options page UIs using Leptos — a fine-grained reactive framework with familiar JSX-like syntax in Rust.
+  </Card>
+  <Card title="Chrome & Firefox" icon="globe">
+    A single codebase targets both Chromium browsers and Firefox via `--target firefox`, generating Manifest V3-compatible output for each.
+  </Card>
+</CardGroup>

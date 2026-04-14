@@ -1,0 +1,55 @@
+---
+title: 'cargo oxichrome commands: build, new, and clean'
+description: 'Install cargo-oxichrome and learn which commands are available to build, scaffold, and clean Oxichrome browser extension projects.'
+keywords: ['cargo oxichrome', 'cli', 'browser extension', 'wasm', 'command reference']
+---
+
+The Oxichrome CLI ships as a Cargo subcommand called `cargo-oxichrome`. Once installed, you invoke it as `cargo oxichrome <command>` from any Oxichrome project directory. This page lists every available command, the prerequisites you need, and how the toolchain manages its own dependencies so you can focus on writing extension logic.
+
+## Installation
+
+Install the CLI with Cargo:
+
+```bash
+cargo install cargo-oxichrome
+```
+
+After installation, run `cargo oxichrome --help` to confirm the binary is available.
+
+## Prerequisites
+
+Before you run any build command, make sure the following are in place:
+
+| Requirement | Notes |
+|---|---|
+| Rust stable | Install via [rustup.rs](https://rustup.rs) |
+| `wasm32-unknown-unknown` target | Auto-installed by `cargo oxichrome build` if missing |
+| `wasm-bindgen-cli` | Auto-installed by `cargo oxichrome build` at the version pinned in your `Cargo.lock` |
+
+<Note>
+`wasm-opt` is optional. If the `wasm-opt` binary is found in your `PATH`, the build pipeline uses it to apply `-Oz` size optimizations to the output `.wasm` file. If it is not present, the build still completes successfully.
+</Note>
+
+## Commands
+
+<CardGroup cols={3}>
+  <Card title="build" icon="hammer" href="/cli/build">
+    Compile your extension to WebAssembly and generate browser-ready output in `dist/`.
+  </Card>
+  <Card title="new" icon="plus" href="/cli/new">
+    Scaffold a new Oxichrome extension project with a working `Cargo.toml` and `src/lib.rs`.
+  </Card>
+  <Card title="clean" icon="trash" href="/cli/clean">
+    Remove the `dist/` directory to start the next build from a clean state.
+  </Card>
+</CardGroup>
+
+## Command summary
+
+| Command | Description |
+|---|---|
+| `cargo oxichrome build` | Build for Chromium (default) |
+| `cargo oxichrome build --release` | Optimized release build |
+| `cargo oxichrome build --target firefox` | Build for Firefox |
+| `cargo oxichrome clean` | Remove the `dist/` directory |
+| `cargo oxichrome new <name>` | Scaffold a new extension project |

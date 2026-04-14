@@ -1,0 +1,60 @@
+---
+title: 'cargo oxichrome clean: remove build output'
+description: 'Reference for the clean command — what it deletes, when to use it, and how it differs from cargo clean for removing the Rust target directory.'
+keywords: ['cargo oxichrome clean', 'dist', 'clean build', 'remove output', 'stale artifacts']
+---
+
+`cargo oxichrome clean` removes the `dist/` directory from your extension project. Run it when you want to wipe all generated browser extension files — both `dist/chromium/` and `dist/firefox/` — and start the next build from scratch. The command runs from your extension's root directory and requires a `Cargo.toml` to be present there.
+
+## Syntax
+
+```bash
+cargo oxichrome clean
+```
+
+The command takes no flags or arguments.
+
+## What it removes
+
+Running `cargo oxichrome clean` deletes the entire `dist/` directory, including:
+
+- `dist/chromium/` — all files generated for the Chromium target
+- `dist/firefox/` — all files generated for the Firefox target
+
+If `dist/` does not exist, the command exits cleanly with a message and does nothing.
+
+<Warning>
+`cargo oxichrome clean` only removes `dist/`. It does not touch the `target/` directory created by Cargo. To remove compiled Rust artifacts and free up disk space, run `cargo clean` separately.
+</Warning>
+
+## When to use it
+
+You typically do not need to run `cargo oxichrome clean` before every build — the build command overwrites output files in place. Use `cargo oxichrome clean` when:
+
+- You encounter stale or unexpected files in `dist/` that do not match your current source
+- You renamed a content script function and the old `content_script_<fn_name>.js` file is still present
+- You want to verify that a build produces exactly the files you expect, with no leftovers from a previous configuration
+
+## Difference from cargo clean
+
+| Command | What it removes |
+|---|---|
+| `cargo oxichrome clean` | `dist/` — browser extension output only |
+| `cargo clean` | `target/` — compiled Rust artifacts and intermediate build files |
+
+Run both commands if you want a fully clean slate before rebuilding:
+
+```bash
+cargo oxichrome clean && cargo clean
+```
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="cargo oxichrome build" href="/cli/build">
+    Rebuild your extension after cleaning the output directory.
+  </Card>
+  <Card title="CLI overview" href="/cli/overview">
+    See all available cargo oxichrome commands in one place.
+  </Card>
+</CardGroup>

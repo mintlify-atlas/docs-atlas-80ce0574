@@ -1,0 +1,172 @@
+---
+title: 'Static assets: include icons and files in extensions'
+description: 'Add icons, images, and other files to your extension by placing them in the static/ directory. Oxichrome copies them into dist/ automatically on every build.'
+keywords: ['static assets', 'icons', 'images', 'static directory', 'get_url', 'runtime', 'dist', 'copy']
+---
+
+Oxichrome automatically copies files from a `static/` directory in your project root into the build output directory on every build. This is how you include icons, images, CSS files, or any other static resource in your extension — no extra configuration required.
+
+## Setting up the `static/` directory
+
+Create a `static/` directory at the same level as `src/` and `Cargo.toml`:
+
+```
+my-extension/
+├── Cargo.toml
+├── src/
+│   └── lib.rs
+└── static/          ← create this
+    ├── icon-16.png
+    ├── icon-48.png
+    └── icon-128.png
+```
+
+Files are copied recursively, so subdirectory structure is preserved in the output.
+
+## Build output
+
+After running `cargo oxichrome build`, each file from `static/` appears at the same relative path inside `dist/{browser}/`:
+
+```
+dist/
+└── chromium/
+    ├── manifest.json
+    ├── background.js
+    ├── icon-16.png     ← copied from static/
+    ├── icon-48.png
+    └── icon-128.png
+```
+
+The same copy happens for `--target firefox`, so `dist/firefox/` will contain the same static files.
+
+<Note>
+Static files are copied after `wasm-bindgen` runs, which means they cannot conflict with generated WASM artifacts. If you accidentally name a static file `my_extension_bg.wasm`, it will overwrite the generated WASM file — so avoid reusing generated file names.
+</Note>
+
+## Referencing static files in your manifest
+
+You reference static files by their path relative to the `dist/{browser}/` directory. For example, to declare extension icons in your `#[extension]` macro, the paths you provide should match where the files land after the build.
+
+If you placed icon files directly in `static/`, reference them without a directory prefix:
+
+```rust
+// In your manifest.json (generated from the extension macro)
+// static/icon-128.png → dist/chromium/icon-128.png
+```
+
+<Tip>
+The `#[extension]` macro does not yet have a built-in `icons` parameter — add icon declarations directly in the manifest by extending the build pipeline, or check the [build pipeline docs](/concepts/build-pipeline) for customization options.
+</Tip>
+
+## Getting the URL of a static file at runtime
+
+Use `oxichrome::runtime::get_url` to resolve the extension-internal URL for any file in the extension package at runtime:
+
+```rust
+let icon_url = oxichrome::runtime::get_url("icon-128.png");
+// Returns something like:
+// chrome-extension://abc123.../icon-128.png
+```
+
+This is useful when you need to set an image `src` dynamically in your popup or options page UI:
+
+```rust
+#[oxichrome::popup]
+fn Popup() -> impl IntoView {
+    let icon = oxichrome::runtime::get_url("icon-128.png");
+
+    view! {
+        <img src=icon alt="Extension icon" />
+    }
+}
+```
+
+## Example: adding extension icons
+
+<Steps>
+  <Step title="Add icon files to static/">
+    Create the `static/` directory and place your icon files inside:
+
+    ```
+    static/
+    ├── icon-16.png
+    ├── icon-48.png
+    └── icon-128.png
+    ```
+  </Step>
+  <Step title="Build the extension">
+    Run the build command:
+
+    ```bash
+    cargo oxichrome build
+    ```
+
+    The icons appear in `dist/chromium/` after the build completes.
+  </Step>
+  <Step title="Verify the output">
+    Check that the files were copied:
+
+    ```
+    dist/
+    └── chromium/
+        ├── manifest.json
+        ├── icon-16.png
+        ├── icon-48.png
+        └── icon-128.png
+    ```
+  </Step>
+  <Step title="Use get_url at runtime (optional)">
+    Reference the files in your Rust code using `oxichrome::runtime::get_url`:
+
+    ```rust
+    let url = oxichrome::runtime::get_url("icon-48.png");
+    ```
+  </Step>
+</Steps>
+
+## Organizing assets in subdirectories
+
+You can organize files into subdirectories inside `static/`. The directory structure is preserved in the output:
+
+```
+static/
+├── icons/
+│   ├── icon-16.png
+│   └── icon-128.png
+└── images/
+    └── hero.png
+```
+
+After build:
+
+```
+dist/chromium/
+├── icons/
+│   ├── icon-16.png
+│   └── icon-128.png
+└── images/
+    └── hero.png
+```
+
+Reference them with the same relative path:
+
+```rust
+let icon = oxichrome::runtime::get_url("icons/icon-128.png");
+```
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Runtime API" icon="bolt" href="/api/runtime">
+    Full reference for runtime::get_url and other runtime bindings.
+  </Card>
+  <Card title="Build pipeline" icon="gear" href="/concepts/build-pipeline">
+    How Oxichrome processes your project from source to dist/.
+  </Card>
+  <Card title="Project structure" icon="folder" href="/project-structure">
+    Overview of all directories in an Oxichrome project.
+  </Card>
+  <Card title="CLI: build" icon="hammer" href="/cli/build">
+    Build command reference including release and target flags.
+  </Card>
+</CardGroup>

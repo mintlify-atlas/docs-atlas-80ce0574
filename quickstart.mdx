@@ -1,80 +1,197 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quickstart: build and load your first extension"
+description: "Install the Oxichrome CLI, scaffold a project, write a counter extension in Rust, and load it in Chrome or Firefox in under ten minutes."
+keywords: ["oxichrome", "quickstart", "getting started", "cargo oxichrome", "rust browser extension", "wasm extension"]
 ---
 
-## Get started in three steps
+Oxichrome gives you a single CLI command that takes a Rust project from source to a browser-loadable extension. This guide walks you through installing the toolchain, scaffolding a new project, writing the counter example, building it, and loading it in Chrome and Firefox.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
+  <Step title="Install the CLI">
+    Install `cargo-oxichrome` from crates.io. This adds the `cargo oxichrome` subcommand to your Cargo installation.
 
-### Step 1: Set up your local environment
+    ```bash
+    cargo install cargo-oxichrome
+    ```
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    The CLI also needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli`. Both are installed automatically the first time you run `cargo oxichrome build`, with version matching handled for you.
 
-### Step 2: Deploy your changes
+    <Note>
+      Rust stable is required. Run `rustup update stable` if you haven't updated recently.
+    </Note>
+  </Step>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Step title="Scaffold a new project">
+    Create a new extension project with the correct structure and dependencies pre-configured.
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```bash
+    cargo oxichrome new my-extension
+    cd my-extension
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    This creates a `Cargo.toml` with the required dependencies and a `src/lib.rs` with a minimal working extension. The generated `Cargo.toml` looks like this:
 
-### Step 3: Go live
+    ```toml Cargo.toml
+    [package]
+    name = "my-extension"
+    version = "0.1.0"
+    edition = "2021"
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    [lib]
+    crate-type = ["cdylib"]
+
+    [dependencies]
+    oxichrome = { version = "0.1" }
+    wasm-bindgen = "0.2"
+    serde = { version = "1", features = ["derive"] }
+    ```
+  </Step>
+
+  <Step title="Write your extension">
+    Replace `src/lib.rs` with the counter extension below. It demonstrates proc macros, `chrome.storage` bindings, a Leptos popup UI, and an options page — all in Rust.
+
+    ```rust src/lib.rs
+    use leptos::prelude::*;
+    use oxichrome::prelude::*;
+
+    #[oxichrome::extension(
+        name = "Counter Extension",
+        version = "0.1.0",
+        description = "A simple counter stored in chrome.storage.local",
+        permissions = ["storage"]
+    )]
+    struct CounterExtension;
+
+    #[oxichrome::background]
+    async fn start() {
+        oxichrome::log!("Counter Extension background service worker started!");
+    }
+
+    #[oxichrome::on(runtime::on_installed)]
+    async fn handle_install(details: oxichrome::__private::wasm_bindgen::JsValue) {
+        oxichrome::log!("Counter Extension installed: {:?}", details);
+
+        if let Err(e) = oxichrome::storage::set("counter", &0i32).await {
+            oxichrome::log!("Failed to initialize counter: {}", e);
+        } else {
+            oxichrome::log!("Counter initialized to 0.");
+        }
+    }
+
+    #[oxichrome::popup]
+    fn Popup() -> impl IntoView {
+        let count = RwSignal::new(0i32);
+
+        Effect::new(move || {
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Ok(Some(val)) = oxichrome::storage::get::<i32>("counter").await {
+                    count.set(val);
+                }
+            });
+        });
+
+        let update = move |delta: i32| {
+            count.update(|c| *c += delta);
+            let val = count.get_untracked();
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = oxichrome::storage::set("counter", &val).await;
+            });
+        };
+
+        let increment = move |_| update(1);
+        let decrement = move |_| update(-1);
+        let reset = move |_| {
+            count.set(0);
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = oxichrome::storage::set("counter", &0i32).await;
+            });
+        };
+
+        view! {
+            <h1>"Counter"</h1>
+            <div>{move || count.get()}</div>
+            <div>
+                <button on:click=decrement>"-"</button>
+                <button on:click=increment>"+"</button>
+                <button on:click=reset>"Reset"</button>
+            </div>
+        }
+    }
+
+    #[oxichrome::options_page]
+    fn Options() -> impl IntoView {
+        view! {
+            <h1>"Counter Extension Settings"</h1>
+        }
+    }
+    ```
+
+    A few things to notice:
+
+    - `#[oxichrome::extension]` declares the extension metadata that goes into `manifest.json`.
+    - `#[oxichrome::background]` marks the async function that runs as the service worker.
+    - `#[oxichrome::on(runtime::on_installed)]` registers a Chrome event listener.
+    - `#[oxichrome::popup]` marks a Leptos component as the popup UI.
+    - `oxichrome::storage::get` and `oxichrome::storage::set` are async and return `Result`.
+  </Step>
+
+  <Step title="Build for Chrome">
+    Run the build command from inside your project directory.
+
+    ```bash
+    cargo oxichrome build
+    ```
+
+    This compiles your Rust to WASM, runs wasm-bindgen, generates `manifest.json` and JS/HTML shims, and writes everything to `dist/chromium/`.
+
+    <Tip>
+      Run `cargo oxichrome build --release` for an optimized build with smaller WASM output.
+    </Tip>
+  </Step>
+
+  <Step title="Load in Chrome">
+    1. Open Chrome and navigate to `chrome://extensions`.
+    2. Enable **Developer mode** using the toggle in the top-right corner.
+    3. Click **Load unpacked**.
+    4. Select the `dist/chromium/` folder from your project.
+
+    Your extension is now active. Click the extension icon in the toolbar to open the popup and try the counter.
+  </Step>
+
+  <Step title="Build for Firefox">
+    To target Firefox, pass the `--target firefox` flag.
+
+    ```bash
+    cargo oxichrome build --target firefox
+    ```
+
+    Output goes to `dist/firefox/` with a Firefox-compatible Manifest V3 `manifest.json` (including the `gecko` browser-specific settings).
+
+    To load it in Firefox:
+
+    1. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`.
+    2. Click **Load Temporary Add-on**.
+    3. Select `dist/firefox/manifest.json`.
+
+    <Note>
+      Temporary add-ons in Firefox are removed when you close the browser. For persistent installation during development, use a [signed extension](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/) or Firefox Developer Edition.
+    </Note>
+  </Step>
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Project structure" icon="folder-open" href="/project-structure">
+    Understand the workspace layout and what each crate contributes.
+  </Card>
+  <Card title="Proc macros" icon="wand-magic-sparkles" href="/concepts/proc-macros">
+    Deep dive into all six proc macros and their parameters.
+  </Card>
+  <Card title="Chrome APIs" icon="database" href="/api/storage">
+    Explore the type-safe bindings to storage, tabs, and runtime.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/overview">
+    Full reference for all `cargo oxichrome` commands and flags.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
